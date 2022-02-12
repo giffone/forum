@@ -1,0 +1,18 @@
+{{define "index"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" type="text/css" href="/assets/css/style.css">
+    <title>Forum by GFaiz and DamirKap</title>
+</head>
+<body>
+    {{template "head"}}
+    <form action="" class="posts-categories">
+        {{template "categories" .}}
+        {{template "posts" .}}
+    </form>
+    {{template "footer"}}
+</body>
+</html>
+{{end}}

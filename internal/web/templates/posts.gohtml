@@ -1,0 +1,10 @@
+{{define "posts"}}
+    <div class="post-group">
+        {{range .Posts}}
+            <a href="#" class="href">{{.ID}}</a>
+            <div class="post_text">{{.Text}}</div>
+            <div class="post_text">{{.User}}</div>
+            <div class="post_text">{{.Date}}</div>
+        {{end}}
+    </div>
+{{end}}

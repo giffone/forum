@@ -2,12 +2,10 @@ package app
 
 import (
 	"forum/internal/adapters/api"
-	home2 "forum/internal/adapters/api/home"
-	"forum/internal/service/home"
+	"forum/internal/adapters/api/home"
+	"forum/internal/service"
 )
 
-func (a *App) home(post api.ServicePost, category api.ServiceCategory) {
-	srv := home.NewService(post, category)
-	hnd := home2.NewHandler(a.ctx, srv)
-	hnd.Register(a.router)
+func (a *App) home(srvPost service.Post, srvCategory service.Category, ses api.Session) {
+	home.NewHandler(srvPost, srvCategory).Register(a.ctx, a.router, ses)
 }

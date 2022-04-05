@@ -2,36 +2,45 @@ package user
 
 import (
 	"context"
-	"fmt"
-	"forum/internal/adapters/api"
+	"forum/internal/adapters/repository"
 	"forum/internal/constant"
-	"forum/internal/model"
+	"forum/internal/object"
+	"forum/internal/object/dto"
+	"forum/internal/object/model"
 	"forum/internal/service"
+	"golang.org/x/crypto/bcrypt"
 )
 
-type serviceUser struct {
-	storageUser service.StorageUser
+type sUser struct {
+	repo repository.Repo
 }
 
-func NewService(storageUser service.StorageUser) api.ServiceUser {
-	return &serviceUser{storageUser: storageUser}
+func NewService(repo repository.Repo) service.User {
+	return &sUser{repo: repo}
 }
 
-func (su *serviceUser) Create(ctx context.Context, dto *model.CreateUserDTO) (error, string) {
-	if err := su.storageUser.Create(ctx, dto); err == nil {
-		return fmt.Errorf(constant.AlreadyExist, "login", "email"), constant.Code403
+func (su *sUser) Create(ctx context.Context, d *dto.User) (int, object.Status) {
+	id, sts := su.repo.Create(ctx, d)
+	if sts != nil {
+		return 0, object.StatusByText(constant.AlreadyExist, "login or password", nil)
 	}
-	return nil, ""
+	return id, nil
 }
 
-func (su *serviceUser) GetByID(ctx context.Context, id int) (*model.User, error) {
-	return su.storageUser.GetByID(ctx, id)
-}
-
-func (su *serviceUser) CheckLoginPassword(ctx context.Context, dto *model.CreateUserDTO) (error, string) {
-	user, err := su.storageUser.GetByLogin(ctx, dto.Login)
-	if err == nil || dto.Password != user.Password { // if did not find login or founded, but not matched
-		return fmt.Errorf(constant.LoginPasswordWrong, "login", "password"), constant.Code403
+func (su *sUser) CheckLoginPassword(ctx context.Context, d *dto.User) (int, object.Status) {
+	m := model.NewUser(nil, nil)
+	m.MakeKeys(constant.FieldLogin, d.Login)
+	sts := su.repo.GetOne(ctx, m)
+	if sts != nil {
+		return 0, sts
 	}
-	return nil, ""
+	if m.ID == 0 { // if did not find login
+		return 0, object.StatusByText(constant.WrongEnter,
+			"login did not founded or password", nil)
+	}
+	err := bcrypt.CompareHashAndPassword([]byte(m.Password), []byte(d.Password))
+	if err != nil { // passwords did not match
+		return 0, object.StatusByText(constant.WrongEnter, "login or password", err)
+	}
+	return m.ID, nil
 }

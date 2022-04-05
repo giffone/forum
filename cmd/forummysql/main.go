@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"forum/internal/app"
+	_ "github.com/go-sql-driver/mysql" // import mysql library
 	"log"
 	"net/http"
 )

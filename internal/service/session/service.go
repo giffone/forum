@@ -2,46 +2,51 @@ package session
 
 import (
 	"context"
-	"forum/internal/adapters/api"
-	"forum/internal/constant"
-	"forum/internal/model"
+	"forum/internal/adapters/repository"
+	"forum/internal/object"
+	"forum/internal/object/dto"
+	"forum/internal/object/model"
 	"forum/internal/service"
+	"forum/pkg/datef"
+	"log"
 )
 
-type serviceSession struct {
-	storageSession service.StorageSession
+type sSession struct {
+	repo repository.Repo
 }
 
-func NewService(storageSession service.StorageSession) api.ServiceSession {
-	return &serviceSession{storageSession: storageSession}
-}
-
-func (ss *serviceSession) Create(ctx context.Context, dto *model.CreateSessionDTO) (error, string) {
-	// create session
-	if err := ss.storageSession.Create(ctx, dto); err == nil {
-		return nil, ""
+func NewService(repo repository.Repo) service.Session {
+	return &sSession{
+		repo: repo,
 	}
+}
+
+func (ss *sSession) Create(ctx context.Context, d *dto.Session) (int, object.Status) {
 	// if session already exist, delete it
-	if err := ss.DeleteByLogin(ctx, dto.Login); err != nil {
-		return err, constant.Code500
+	dDelete := dto.NewSession(nil, nil, d.Obj.Ck)
+	if sts := ss.repo.Delete(ctx, dDelete); sts != nil {
+		return 0, sts
 	}
-	// create new session after delete
-	if err := ss.storageSession.Create(ctx, dto); err != nil {
-		return err, constant.Code500
+	// create session
+	return ss.repo.Create(ctx, d)
+}
+
+func (ss *sSession) Check(ctx context.Context, d *dto.Session) (interface{}, object.Status) {
+	// make new model session
+	session := model.NewSession(nil, d.Obj.Ck)
+	// get session from db
+	sts := ss.repo.GetOne(ctx, session)
+	if sts != nil {
+		return nil, sts
 	}
-	return nil, ""
-}
-
-func (ss *serviceSession) GetByLogin(ctx context.Context, login string) (*model.Session, error) {
-
-	return nil, nil
-}
-
-func (ss *serviceSession) DeleteByLogin(ctx context.Context, login string) error {
-	return ss.storageSession.DeleteByLogin(ctx, login)
-}
-
-func (ss *serviceSession) DeleteExpired(ctx context.Context) error {
-
-	return nil
+	// session not match
+	if session.UUID != d.Obj.Ck.SessionUUID {
+		log.Printf("uuid did not match db: %s dto: %v", session.UUID, d.Obj.Ck)
+		return nil, nil
+	}
+	// session expire
+	if datef.Expire(session.Expire) {
+		sts = ss.repo.Delete(ctx, d)
+	}
+	return session, sts
 }

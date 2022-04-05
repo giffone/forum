@@ -4,129 +4,139 @@ import (
 	"context"
 	"forum/internal/adapters/api"
 	"forum/internal/constant"
-	"forum/internal/model"
-	uuid "github.com/nu7hatch/gouuid"
+	"forum/internal/object"
+	"forum/internal/object/dto"
+	"forum/internal/service"
 	"log"
 	"net/http"
-	"time"
 )
 
-type handlerUser struct {
-	ctx        context.Context
-	srvUser    api.ServiceUser
-	srvSession api.ServiceSession
+type hUser struct {
+	service service.User
 }
 
-func NewHandler(ctx context.Context, srvUser api.ServiceUser, srvSession api.ServiceSession) api.Handler {
-	return &handlerUser{
-		ctx:        ctx,
-		srvUser:    srvUser,
-		srvSession: srvSession,
+func NewHandler(service service.User) api.Handler {
+	return &hUser{
+		service: service,
 	}
 }
 
-func (hu *handlerUser) Register(router *http.ServeMux) {
-	router.HandleFunc(constant.URLSignUp, hu.SignUp)
-	router.HandleFunc(constant.URLLogin, hu.Login)
+func (hu *hUser) Register(ctx context.Context, router *http.ServeMux, s api.Session) {
+	router.HandleFunc(constant.URLSignUp, s.Apply(ctx, hu.SignUp))
+	router.HandleFunc(constant.URLLogin, s.Apply(ctx, hu.Login))
+	router.HandleFunc(constant.URLLogout, s.Apply(ctx, hu.Logout))
 }
 
-func (hu *handlerUser) SignUp(w http.ResponseWriter, r *http.Request) {
+func (hu *hUser) SignUp(ctx context.Context, ses api.Session,
+	w http.ResponseWriter, r *http.Request) {
 	log.Println(r.Method, " ", r.URL.Path)
-	if r.Method == "GET" {
-		tmpl, err := api.Parse(constant.PathSignUp)
-		if err != nil {
-			api.ErrorsHTTP(w, "", constant.Code500)
-			return
-		}
-		api.Execute(w, tmpl, "signup", nil)
-		return
-	}
 	if r.Method != "POST" {
-		api.ErrorsHTTP(w, "", constant.Code405)
+		api.Message(w, object.StatusByCode(constant.Code405))
 		return
 	}
-	ctx, cancel := context.WithTimeout(hu.ctx, constant.TimeLimit)
+	ctx, cancel := context.WithTimeout(ctx, constant.TimeLimit)
 	defer cancel()
 
 	// create DTO with a new user
-	dto := new(model.CreateUserDTO)
-	dto.Add(r)
+	user := dto.NewUser(nil, nil)
+	// create return page
+	user.Obj.Sts.ReturnPage = constant.URLLogin + "?#signup"
+	// add data from request
+	user.Add(r)
 	// and check fields for incorrect data entry
-	if !dto.ValidLogin() || !dto.ValidPassword() || !dto.ValidEmail() || !dto.CryptPassword() {
-		api.ErrorsHTTP(w, dto.Err, dto.ErrCode)
+	if !user.ValidLogin() || !user.ValidPassword() ||
+		!user.ValidEmail() || !user.CryptPassword() {
+		api.Message(w, user.Obj.Sts)
 		return
 	}
 	// create user in database
-	err, code := hu.srvUser.Create(ctx, dto)
-	if err != nil {
-		api.ErrorsHTTP(w, err.Error(), code)
+	id, sts := hu.service.Create(ctx, user)
+	if sts != nil {
+		api.Message(w, sts)
 		return
 	}
 	// make session
-	hu.session(ctx, w, r, dto.Login)
+	method := ""
+	if m := r.PostFormValue("remember"); m == "on" {
+		method = "remember"
+	}
+	sts = ses.Create(ctx, w, id, method)
+	if sts != nil {
+		api.Message(w, sts)
+		return
+	}
+	// w status
+	sts = object.StatusByText(constant.StatusCreated,
+		"to return on main page click button below", nil)
+	api.Message(w, sts)
 }
 
-func (hu *handlerUser) Login(w http.ResponseWriter, r *http.Request) {
+func (hu *hUser) Login(ctx context.Context, ses api.Session,
+	w http.ResponseWriter, r *http.Request) {
 	log.Println(r.Method, " ", r.URL.Path)
 	if r.Method == "GET" {
-		tmpl, err := api.Parse(constant.PathLogin)
-		if err != nil {
-			api.ErrorsHTTP(w, "", constant.Code500)
+		pe, sts := api.NewParseExecute("login").Parse()
+		if sts != nil {
+			api.Message(w, sts)
 			return
 		}
-		api.Execute(w, tmpl, "login", nil)
+		pe.Execute(w, constant.Code200)
 		return
 	}
 	if r.Method != "POST" {
-		api.ErrorsHTTP(w, "", constant.Code405)
+		api.Message(w, object.StatusByCode(constant.Code405))
 		return
 	}
-	ctx, cancel := context.WithTimeout(hu.ctx, constant.TimeLimit)
+	ctx, cancel := context.WithTimeout(ctx, constant.TimeLimit)
 	defer cancel()
 
 	// create DTO with a user
-	dto := new(model.CreateUserDTO)
-	dto.Add(r)
+	user := dto.NewUser(nil, nil)
+	// create return page
+	// must be before Add() for ignore re-password check
+	user.Obj.Sts.ReturnPage = constant.URLLogin
+	// add data from request
+	user.Add(r)
 	// and check fields for incorrect data entry
-	if !dto.ValidLogin() || !dto.ValidPassword() || !dto.CryptPassword() {
-		api.ErrorsHTTP(w, dto.Err, dto.ErrCode)
+	if !user.ValidLogin() || !user.ValidPassword() {
+		api.Message(w, user.Obj.Sts)
 		return
 	}
 	// checks login password
-	err, code := hu.srvUser.CheckLoginPassword(ctx, dto)
-	if err != nil {
-		api.ErrorsHTTP(w, err.Error(), code)
+	id, sts := hu.service.CheckLoginPassword(ctx, user)
+	if sts != nil {
+		api.Message(w, sts)
 		return
 	}
 	// make session
-	hu.session(ctx, w, r, dto.Login)
+	method := ""
+	if m := r.PostFormValue("remember"); m == "on" {
+		method = "remember"
+	}
+	sts = ses.Create(ctx, w, id, method)
+	if sts != nil {
+		api.Message(w, sts)
+		return
+	}
+	// w status
+	sts = object.StatusByText(constant.StatusOK,
+		"you just logged in, to return on main page click button below", nil)
+	api.Message(w, sts)
 }
 
-func (hu *handlerUser) session(ctx context.Context, w http.ResponseWriter, r *http.Request, login string) {
-	// create session
-	sID, err := uuid.NewV4()
-	if err != nil {
-		api.ErrorsHTTP(w, err.Error(), constant.Code500)
+func (hu *hUser) Logout(ctx context.Context, ses api.Session,
+	w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		api.Message(w, object.StatusByCode(constant.Code405))
 		return
 	}
-	// create cookie
-	date := time.Now().AddDate(0, 0, constant.SessionExpire)
-	c := &http.Cookie{
-		Name:    "session",
-		Value:   sID.String(),
-		Expires: date,
-	}
-	http.SetCookie(w, c)
-
-	// create session in database
-	// if session exist, it will be deleted
-	dto := new(model.CreateSessionDTO)
-	dto.Add(login, c.Value, date.String())
-	err, code := hu.srvSession.Create(ctx, dto)
-	if err != nil {
-		api.ErrorsHTTP(w, err.Error(), code)
+	sts := ses.End(w)
+	if sts != nil {
+		api.Message(w, sts)
 		return
 	}
-	// go to homepage
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	// w status
+	sts = object.StatusByText(constant.StatusOK,
+		"you just logged out, to return on main page click button below", nil)
+	api.Message(w, sts)
 }

@@ -2,27 +2,76 @@ package category
 
 import (
 	"context"
-	"forum/internal/adapters/api"
-	"forum/internal/model"
+	"forum/internal/adapters/repository"
+	"forum/internal/constant"
+	"forum/internal/object"
+	"forum/internal/object/dto"
+	"forum/internal/object/model"
 	"forum/internal/service"
 )
 
-type serviceCategory struct {
-	storageCategory service.StorageCategory
+type sCategory struct {
+	repo repository.Repo
 }
 
-func NewService(storage service.StorageCategory) api.ServiceCategory {
-	return &serviceCategory{storageCategory: storage}
+func NewService(repo repository.Repo) service.Category {
+	return &sCategory{repo: repo}
 }
 
-func (sc *serviceCategory) GetAll(ctx context.Context) ([]*model.Category, error) {
-	return sc.storageCategory.GetAll(ctx)
-}
-
-func (sc *serviceCategory) Create(ctx context.Context, dto *model.CreateCategoryDTO) error {
+func (sc *sCategory) Create(ctx context.Context, dto *dto.Category) object.Status {
 	return nil
 }
 
-func (sc *serviceCategory) Delete(ctx context.Context, id int) error {
+func (sc *sCategory) Delete(ctx context.Context, id int) object.Status {
 	return nil
+}
+
+func (sc *sCategory) GetList(ctx context.Context, m model.Models) (interface{}, object.Status) {
+	ctx2, cancel := context.WithTimeout(ctx, constant.TimeLimitDB)
+	defer cancel()
+	err := sc.repo.GetList(ctx2, m)
+	if err != nil {
+		return nil, err
+	}
+	categories := m.Return().Categories
+	if len(categories.Slice) == 0 {
+		return categories.IfNil(), nil
+	}
+	return categories.Slice, nil
+}
+
+func (sc *sCategory) GetFor(ctx context.Context, pc model.PostOrComment) object.Status {
+	for i := 0; i < pc.LSlice(); i++ {
+		id := pc.PostOrCommentID(i)
+		categories := model.NewCategories(nil, nil)
+		categories.MakeKeys(constant.KeyPost, id) // key - post, only post have category
+		sts := sc.repo.GetList(ctx, categories)
+		if sts != nil {
+			return sts
+		}
+		if len(categories.Slice) == 0 {
+			pc.Add(constant.KeyCategory, i, categories.IfNil())
+		} else {
+			pc.Add(constant.KeyCategory, i, categories.Slice)
+		}
+	}
+	return nil
+}
+
+func (sc *sCategory) GetForChan(ctx context.Context, pc model.PostOrComment, channel chan object.Status) {
+	for i := 0; i < pc.LSlice(); i++ {
+		id := pc.PostOrCommentID(i)
+		categories := model.NewCategories(nil, nil)
+		categories.MakeKeys(constant.KeyPost, id) // key - post, only post have category
+		sts := sc.repo.GetList(ctx, categories)
+		if sts != nil {
+			channel <- sts
+		}
+		if len(categories.Slice) == 0 {
+			pc.Add(constant.KeyCategory, i, categories.IfNil())
+		} else {
+			pc.Add(constant.KeyCategory, i, categories.Slice)
+		}
+	}
+	channel <- nil
 }
